@@ -3,7 +3,6 @@ extern crate futures;
 extern crate pnetlink;
 extern crate pnet_macros_support;
 extern crate tokio;
-extern crate tokio_io;
 extern crate tokio_core;
 
 use std::net::{Ipv4Addr, Ipv6Addr, IpAddr};

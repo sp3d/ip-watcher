@@ -9,6 +9,5 @@ futures = "0.1"
 tokio = "0.1"
 tokio-codec = "0.1"
 tokio-core = "0.1"
-tokio-io = "0.1"
 pnet_macros_support = "0.22"
 pnetlink = { git = "https://github.com/polachok/pnetlink" }
