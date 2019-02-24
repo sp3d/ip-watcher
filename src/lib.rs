@@ -28,7 +28,7 @@ pub enum IpChange {
 }
 
 use pnetlink::tokio::{NetlinkSocket, NetlinkCodec};
-use tokio_io::codec::Framed;
+use tokio::codec::Framed;
 use futures::{Sink,Stream,Future};
 
 /** A watcher for changes to the IP addresses bound to network interfaces on a Linux system.
@@ -47,7 +47,7 @@ impl IpWatcher {
 		let socket = NetlinkSocket::bind(socket::NetlinkProtocol::Route,
 			0x440,
 			&handle)?;
-		let framed = tokio_io::AsyncRead::framed(socket, pnetlink::tokio::NetlinkCodec {});
+		let framed = tokio_codec::Framed::new(socket, pnetlink::tokio::NetlinkCodec {});
 		/* send a packet requesting current addresses for initialization */
 		let pkt = NetlinkRequestBuilder::new(RTM_GETADDR as u16, NetlinkMsgFlags::NLM_F_DUMP).append({
 			let len = MutableIfInfoPacket::minimum_packet_size();
