@@ -78,7 +78,7 @@ fn extract_ip(msg: &NetlinkPacket) -> Option<IpAddr> {
 				},
 				10 => {
 					let mut ip6addr: [u8;16] = [0;16];
-					&mut ip6addr[..].copy_from_slice(rta.payload());
+					ip6addr[..].copy_from_slice(rta.payload());
 					return Some(Ipv6Addr::from(ip6addr).into());
 				},
 				_ => {},
@@ -94,7 +94,7 @@ impl Stream for IpWatcher {
 
 	fn poll(&mut self) -> futures::Poll<Option<IpChange>, std::io::Error> {
 		/* first, send a message to query current interface addresses */
-		let new_framed = if let &mut IpWatcher::Initial(ref mut framed) = self {
+		let new_framed = if let IpWatcher::Initial(ref mut framed) = *self {
 			match framed.poll() {
 				Ok(Ready(framed)) => {
 					Some(framed)
@@ -111,9 +111,9 @@ impl Stream for IpWatcher {
 
 		/* monitor for new interface changes */
 		use IpChange::*;
-		match self {
-			&mut IpWatcher::Initial(_) => unreachable!(),
-			&mut IpWatcher::Steady(ref mut framed) => loop { match framed.poll() {
+		match *self {
+			IpWatcher::Initial(_) => unreachable!(),
+			IpWatcher::Steady(ref mut framed) => loop { match framed.poll() {
 				Ok(Ready(Some(frame))) => {
 					//println!("RECEIVED FRAME: {:?}", frame);
 					//let fake = "0.0.0.0".parse().unwrap();
