@@ -37,11 +37,10 @@ use futures::sink::Sink;
 
 Notifications will not necessarily be balanced; for example, it is possible to receive multiple
 IpAdded notifications for the same address in a row. */
+#[derive(PartialEq)]
 pub enum IpWatcherState {
 	/// has not sent request for packets yet
 	Initial,
-	/// is waiting for request to flush
-	Flushing,
 	/// is waiting for packets
 	Steady,
 }
@@ -53,8 +52,10 @@ impl IpWatcher {
 	/** create a new watcher for IP changes */
 	pub fn new() -> Result<Self, std::io::Error> {
 		/* connect the socket, listening to ipv4 and ipv6 address changes */
+		const RTMGRP_IPV4_IFADDR: u32 = 0x10;
+		const RTMGRP_IPV6_IFADDR: u32 = 0x100;
 		let socket = NetlinkSocket::bind(socket::NetlinkProtocol::Route,
-			0x440)?;
+			RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR)?;
 		let framed = Framed::new(socket, pnetlink::tokio::NetlinkCodec {});
 		Ok(IpWatcher(IpWatcherState::Initial, Box::new(framed)))
 	}
@@ -97,64 +98,63 @@ impl Stream for IpWatcher {
 		use IpChange::*;
 
 		match self.get_mut() {
-			IpWatcher(state @ IpWatcherState::Initial, framed) => {
-				/* send a packet requesting current addresses for initialization */
-				let pkt = NetlinkRequestBuilder::new(RTM_GETADDR as u16, NetlinkMsgFlags::NLM_F_DUMP).append({
-					let len = MutableIfInfoPacket::minimum_packet_size();
-					let data = vec![0; len];
-					MutableIfInfoPacket::owned(data).unwrap()
-				}).build();
-				let () = Pin::new(framed).start_send(pkt)?;
-				*state = IpWatcherState::Flushing;
-			},
-			IpWatcher(state @ IpWatcherState::Flushing, framed) => {
-				match Pin::new(framed).poll_flush(cx) {
-					Ready(Ok(())) => {
-						*state = IpWatcherState::Steady;
-					},
-					Ready(Err(e)) => return Poll::Ready(Some(Err(e))),
-					Pending => return Poll::Pending,
+			IpWatcher(ref mut state, ref mut framed) => {
+				if *state == IpWatcherState::Initial {
+					/* send a packet requesting current addresses for initialization */
+					let pkt = NetlinkRequestBuilder::new(RTM_GETADDR as u16, NetlinkMsgFlags::NLM_F_DUMP).append({
+						let len = MutableIfInfoPacket::minimum_packet_size();
+						let data = vec![0; len];
+						MutableIfInfoPacket::owned(data).unwrap()
+					}).build();
+					*state = IpWatcherState::Steady;
+					let pinned = Pin::new(&mut *framed);
+					match pinned.start_send(&pkt) {
+						Ok(()) => {
+							let pinned = Pin::new(&mut *framed);
+							let _ = pinned.poll_flush(cx); /* flush for netlink sockets always succeeds */
+						},
+						Err(e) => return Poll::Ready(Some(Err(e))),
+					};
 				}
-			},
-			IpWatcher(IpWatcherState::Steady, framed) => {
-				match Pin::new(framed).poll_next(cx) {
-					Ready(Some(Ok(frame))) => {
-						if frame.get_kind() == RTM_NEWLINK as u16 {
-							if let Some(ip) = extract_ip(&frame) {
-								return Ready(Some(Ok(IpAdded(ip))))
-							}
-						} else if frame.get_kind() == RTM_DELLINK as u16 {
-							if let Some(ip) = extract_ip(&frame) {
-								return Ready(Some(Ok(IpRemoved(ip))))
-							}
-						} else if frame.get_kind() == RTM_NEWADDR as u16 {
-							if let Some(ip) = extract_ip(&frame) {
-								return Ready(Some(Ok(IpAdded(ip))))
-							}
-						} else if frame.get_kind() == RTM_DELADDR as u16 {
-							if let Some(ip) = extract_ip(&frame) {
-								return Ready(Some(Ok(IpRemoved(ip))))
-							}
-						}
-						return Poll::Pending
-					},
-					Ready(None) => return Poll::Ready(None),
-					Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
-					Pending => return Poll::Pending,
-				}
-			}
-		};
 
-		return Poll::Pending;
+				loop {
+					match Pin::new(&mut *framed).poll_next(cx) {
+						Ready(Some(Ok(frame))) => {
+							if frame.get_kind() == RTM_NEWLINK as u16 {
+								if let Some(ip) = extract_ip(&frame) {
+									return Ready(Some(Ok(IpAdded(ip))))
+								}
+							} else if frame.get_kind() == RTM_DELLINK as u16 {
+								if let Some(ip) = extract_ip(&frame) {
+									return Ready(Some(Ok(IpRemoved(ip))))
+								}
+							} else if frame.get_kind() == RTM_NEWADDR as u16 {
+								if let Some(ip) = extract_ip(&frame) {
+									return Ready(Some(Ok(IpAdded(ip))))
+								}
+							} else if frame.get_kind() == RTM_DELADDR as u16 {
+								if let Some(ip) = extract_ip(&frame) {
+									return Ready(Some(Ok(IpRemoved(ip))))
+								}
+							}
+						},
+						Ready(None) => return Poll::Ready(None),
+						Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
+						Pending => return Poll::Pending,
+					}
+				}
+			},
+		}
 	}
 }
 
 #[test]
 fn main() {
 	use futures::StreamExt;
-	let mut runtime = tokio::runtime::Runtime::new().unwrap();
+	let runtime = tokio::runtime::Runtime::new().unwrap();
 	//let mut runtime = tokio_crate::runtime::Builder::new().enable_io().build().unwrap();
-	let ips = runtime.enter(|| IpWatcher::new().expect("could not set up IP watcher"));
+	let _guard = runtime.enter();
+	let ips = IpWatcher::new().expect("could not set up IP watcher");
 	let f = ips.map(|i| println!("{:?}", i)).collect::<()>();
 	runtime.block_on(f);
 }

@@ -7,9 +7,11 @@ description = "watch for changes to system IP addresses via the Linux netlink ke
 [dependencies]
 byteorder = "1.3"
 futures = "0.3"
-tokio = "0.2"
-tokio-util = "0.2"
-pnet_macros_support = "0.25"
-#tokio-core = "0.2"
+tokio = "1.8"
+tokio-util = { version = "0.6", features = ["codec"] }
+pnet_macros_support = "0.28"
 #pnetlink = { git = "https://github.com/polachok/pnetlink" }
 pnetlink = { git = "https://github.com/sp3d/pnetlink" }
+
+[dev-dependencies]
+tokio = { version = "1.8", features = ["rt-multi-thread"] }
